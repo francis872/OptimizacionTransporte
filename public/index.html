@@ -4,21 +4,57 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Optimizador IO</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 40px; background: #f7f7f7; color: #222; }
-    main { max-width: 720px; margin: auto; padding: 24px; background: #fff; border-radius: 12px; box-shadow: 0 20px 50px rgba(0,0,0,0.08); }
-    h1 { margin-top: 0; color: #0a4d8c; }
-    a { color: #0a4d8c; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-  </style>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main>
-    <h1>Optimizador IO</h1>
-    <p>Proyecto de optimización de transporte y asignación.</p>
-    <p>Este repositorio contiene una aplicación de escritorio WinForms en .NET.</p>
-    <p>Repositorio en GitHub: <a href="https://github.com/francis872/OptimizacionTransporte">github.com/francis872/OptimizacionTransporte</a></p>
-    <p>El despliegue de Vercel muestra esta página estática porque la aplicación principal es de escritorio.</p>
-  </main>
+  <div class="container">
+    <section class="card">
+      <h1>Optimizador IO</h1>
+      <p>Interfaz web para resolver problemas de transporte con métodos interactivos.</p>
+      <p>Escoge el tamaño del problema, completa costos, oferta y demanda, y resuelve con Esquina Noroeste, Costo Mínimo o Vogel.</p>
+    </section>
+
+    <section class="card">
+      <div id="alert"></div>
+      <div class="grid grid-3">
+        <div>
+          <label for="origenes">Orígenes</label>
+          <input id="origenes" type="number" min="1" max="8" value="3">
+        </div>
+        <div>
+          <label for="destinos">Destinos</label>
+          <input id="destinos" type="number" min="1" max="8" value="3">
+        </div>
+        <div>
+          <label for="metodo">Método</label>
+          <select id="metodo">
+            <option value="esquina">Esquina Noroeste</option>
+            <option value="costo">Costo Mínimo</option>
+            <option value="vogel">Aproximación de Vogel</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top: 18px;">
+        <button id="generar">Generar matriz</button>
+        <button id="resolver">Resolver problema</button>
+      </div>
+
+      <div id="balance-info" style="margin-top: 16px; font-weight: 600;"></div>
+      <table id="tabla-costos"></table>
+    </section>
+
+    <section class="card">
+      <div id="resultado"></div>
+      <div id="pasos"></div>
+    </section>
+
+    <footer>
+      <p>Proyecto de escritorio original: <a href="https://github.com/francis872/OptimizacionTransporte">GitHub</a>.</p>
+      <p>Esta interfaz web está creada para ejecutar los métodos del problema en el navegador.</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 </html>
