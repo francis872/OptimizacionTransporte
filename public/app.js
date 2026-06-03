@@ -8,6 +8,8 @@ const resultadoContainer = document.getElementById('resultado');
 const pasosContainer = document.getElementById('pasos');
 const alertBox = document.getElementById('alert');
 const balanceInfo = document.getElementById('balance-info');
+const exportBtn = document.getElementById('export-csv');
+const pasteBtn = document.getElementById('paste-clipboard');
 
 function mostrarAlerta(texto) {
   alertBox.textContent = texto;
@@ -424,43 +426,46 @@ function solveMODI(initialMatriz, costos, oferta, demanda, maxIter = 50) {
   }
 
   function findCycle(startI, startJ) {
-    // DFS alternating row/col to find cycle through basic cells plus start
-    const basics = new Set(getBasicCells(matriz).map(x => x.join(',')));
-    basics.add([startI, startJ].join(','));
+      // BFS to find an alternating cycle (row -> col -> row ...)
+      const basics = new Set(getBasicCells(matriz).map(x => x.join(',')));
+      basics.add([startI, startJ].join(','));
 
-    function neighbors(i, j, byRow) {
-      const res = [];
-      if (byRow) {
-        for (let jj = 0; jj < cols; jj++) if (basics.has([i, jj].join(',')) && jj !== j) res.push([i, jj]);
-      } else {
-        for (let ii = 0; ii < filas; ii++) if (basics.has([ii, j].join(',')) && ii !== i) res.push([ii, j]);
+      function rowNeighbors(i, j) {
+        const out = [];
+        for (let jj = 0; jj < cols; jj++) if (jj !== j && basics.has([i, jj].join(','))) out.push([i, jj]);
+        return out;
       }
-      return res;
-    }
-
-    const path = [[startI, startJ]];
-    const visited = new Set();
-
-    function dfs(i, j, byRow) {
-      const key = path.map(p => p.join(',')).join('|');
-      if (path.length > 1 && i === startI && j === startJ && path.length >= 4) return true;
-      const neigh = neighbors(i, j, byRow);
-      for (const [ni, nj] of neigh) {
-        const k = path.findIndex(p => p[0] === ni && p[1] === nj);
-        if (k === 0 && path.length >= 4) { path.push([ni, nj]); return true; }
-        if (k !== -1) continue;
-        path.push([ni, nj]);
-        if (dfs(ni, nj, !byRow)) return true;
-        path.pop();
+      function colNeighbors(i, j) {
+        const out = [];
+        for (let ii = 0; ii < filas; ii++) if (ii !== i && basics.has([ii, j].join(','))) out.push([ii, j]);
+        return out;
       }
-      return false;
-    }
 
-    if (dfs(startI, startJ, true)) {
-      // ensure cycle ends at start, remove trailing duplicate
-      return path.slice();
-    }
-    return null;
+      const queue = [];
+      // state: i, j, byRow (next move type), path
+      queue.push({ i: startI, j: startJ, byRow: true, path: [[startI, startJ]] });
+      const seen = new Set();
+
+      while (queue.length) {
+        const state = queue.shift();
+        const key = state.i + ',' + state.j + ',' + state.byRow + ',' + state.path.length;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const neigh = state.byRow ? rowNeighbors(state.i, state.j) : colNeighbors(state.i, state.j);
+        for (const [ni, nj] of neigh) {
+          // if we close cycle and length >=4 and even
+          if (ni === startI && nj === startJ && state.path.length >= 3) {
+            const cycle = state.path.concat([[ni, nj]]);
+            if (cycle.length % 2 === 0 && cycle.length >= 4) return cycle;
+          }
+          // avoid revisiting same cell in current path
+          if (state.path.some(p => p[0] === ni && p[1] === nj)) continue;
+          const newPath = state.path.concat([[ni, nj]]);
+          queue.push({ i: ni, j: nj, byRow: !state.byRow, path: newPath });
+        }
+      }
+      return null;
   }
 
   function adjustCycle(cycle) {
@@ -546,9 +551,77 @@ function resolverProblema() {
   mostrarResultado(resultado);
 }
 
+function exportCSV() {
+  const costos = leerMatrizCostos();
+  const oferta = leerVector('.oferta-input');
+  const demanda = leerVector('.demanda-input');
+  if (!costos.length) { mostrarAlerta('Genera la matriz antes de exportar.'); return; }
+  const filas = costos.length;
+  const cols = costos[0].length;
+  let csv = '';
+  // header
+  csv += ',' + Array.from({ length: cols }, (_, j) => `Destino ${j + 1}`).join(',') + ',Oferta\n';
+  for (let i = 0; i < filas; i++) {
+    csv += `Origen ${i + 1},` + costos[i].map(v => v ?? 0).join(',') + ',' + (oferta[i] ?? 0) + '\n';
+  }
+  csv += 'Demanda,' + (demanda.map(d => d ?? 0).join(',')) + ',\n';
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'optimizador_matriz.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+async function pasteFromClipboard() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) { mostrarAlerta('El portapapeles está vacío o no contiene texto.'); return; }
+
+    const rows = text.trim().split(/\r?\n/).map(r => r.split(/\t|,/).map(c => c.trim()));
+    // detect exported format: header row starts with empty or 'Destino' and last row starts with 'Demanda'
+    const first = rows[0][0].toLowerCase();
+    const last = rows[rows.length - 1][0].toLowerCase();
+    if (last.includes('demanda')) {
+      const cols = rows[0].length - 2; // first empty, destinations..., oferta
+      const origenes = rows.length - 2; // minus header and demanda
+      origenesInput.value = origenes;
+      destinosInput.value = cols;
+      crearTablaCostos(origenes, cols);
+      // fill matrix and oferta
+      for (let i = 0; i < origenes; i++) {
+        const row = rows[i + 1];
+        for (let j = 0; j < cols; j++) {
+          const selector = `input.cell-input[data-row="${i}"][data-col="${j}"]`;
+          const inp = document.querySelector(selector);
+          if (inp) inp.value = Number(row[j + 1]) || 0;
+        }
+        // oferta is last column
+        const ofertaVal = Number(row[row.length - 1]) || 0;
+        const ofertaInputEl = document.querySelector(`input.oferta-input[data-row="${i}"]`);
+        if (ofertaInputEl) ofertaInputEl.value = ofertaVal;
+      }
+      // demanda row
+      const demandaRow = rows[rows.length - 1];
+      for (let j = 0; j < cols; j++) {
+        const demVal = Number(demandaRow[j + 1]) || 0;
+        const demInput = document.querySelector(`input.demanda-input[data-col="${j}"]`);
+        if (demInput) demInput.value = demVal;
+      }
+      actualizarBalance();
+      mostrarAlerta('Pegado desde portapapeles con formato detectado.');
+    } else {
+      mostrarAlerta('Formato no reconocido. Pega la tabla exportada desde la interfaz (Exportar CSV) o una tabla con encabezados similares.');
+    }
+  } catch (err) {
+    mostrarAlerta('Error leyendo portapapeles: ' + (err.message || err));
+  }
+}
+
 generarBtn.addEventListener('click', () => {
   crearTablaCostos(Number(origenesInput.value), Number(destinosInput.value));
   mostrarAlerta('');
 });
 resolverBtn.addEventListener('click', resolverProblema);
+exportBtn && exportBtn.addEventListener('click', exportCSV);
+pasteBtn && pasteBtn.addEventListener('click', pasteFromClipboard);
 crearTablaCostos(Number(origenesInput.value), Number(destinosInput.value));
