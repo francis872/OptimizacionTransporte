@@ -378,6 +378,139 @@ function solveVogel(costos, oferta, demanda) {
   };
 }
 
+function solveMODI(initialMatriz, costos, oferta, demanda, maxIter = 50) {
+  // MODI optimization: improve an initial basic feasible solution
+  const filas = costos.length;
+  const cols = costos[0].length;
+  let matriz = initialMatriz.map(row => row.map(v => v));
+
+  function getBasicCells(mat) {
+    const basics = [];
+    for (let i = 0; i < filas; i++) {
+      for (let j = 0; j < cols; j++) {
+        if (mat[i][j] > 0) basics.push([i, j]);
+      }
+    }
+    return basics;
+  }
+
+  function computeUV(basics) {
+    const u = Array(filas).fill(null);
+    const v = Array(cols).fill(null);
+    u[0] = 0;
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const [i, j] of basics) {
+        if (u[i] !== null && v[j] === null) { v[j] = costos[i][j] - u[i]; changed = true; }
+        if (v[j] !== null && u[i] === null) { u[i] = costos[i][j] - v[j]; changed = true; }
+      }
+    }
+    return { u, v };
+  }
+
+  function reducedCosts(u, v) {
+    const deltas = [];
+    for (let i = 0; i < filas; i++) {
+      for (let j = 0; j < cols; j++) {
+        if (matriz[i][j] === 0) {
+          const ui = u[i] ?? 0;
+          const vj = v[j] ?? 0;
+          deltas.push({ i, j, delta: costos[i][j] - (ui + vj) });
+        }
+      }
+    }
+    return deltas;
+  }
+
+  function findCycle(startI, startJ) {
+    // DFS alternating row/col to find cycle through basic cells plus start
+    const basics = new Set(getBasicCells(matriz).map(x => x.join(',')));
+    basics.add([startI, startJ].join(','));
+
+    function neighbors(i, j, byRow) {
+      const res = [];
+      if (byRow) {
+        for (let jj = 0; jj < cols; jj++) if (basics.has([i, jj].join(',')) && jj !== j) res.push([i, jj]);
+      } else {
+        for (let ii = 0; ii < filas; ii++) if (basics.has([ii, j].join(',')) && ii !== i) res.push([ii, j]);
+      }
+      return res;
+    }
+
+    const path = [[startI, startJ]];
+    const visited = new Set();
+
+    function dfs(i, j, byRow) {
+      const key = path.map(p => p.join(',')).join('|');
+      if (path.length > 1 && i === startI && j === startJ && path.length >= 4) return true;
+      const neigh = neighbors(i, j, byRow);
+      for (const [ni, nj] of neigh) {
+        const k = path.findIndex(p => p[0] === ni && p[1] === nj);
+        if (k === 0 && path.length >= 4) { path.push([ni, nj]); return true; }
+        if (k !== -1) continue;
+        path.push([ni, nj]);
+        if (dfs(ni, nj, !byRow)) return true;
+        path.pop();
+      }
+      return false;
+    }
+
+    if (dfs(startI, startJ, true)) {
+      // ensure cycle ends at start, remove trailing duplicate
+      return path.slice();
+    }
+    return null;
+  }
+
+  function adjustCycle(cycle) {
+    // cycle is sequence of coords, ensure even length and alternate + - starting at 0 as +
+    const positions = cycle.map(([i, j]) => [i, j]);
+    // find theta = min allocation on negative positions (odd indices)
+    let theta = Infinity;
+    for (let idx = 1; idx < positions.length; idx += 2) {
+      const [i, j] = positions[idx];
+      theta = Math.min(theta, matriz[i][j]);
+    }
+    for (let idx = 0; idx < positions.length; idx++) {
+      const [i, j] = positions[idx];
+      if (idx % 2 === 0) matriz[i][j] += theta; else matriz[i][j] -= theta;
+    }
+    // clean tiny negatives to zero
+    for (let i = 0; i < filas; i++) for (let j = 0; j < cols; j++) if (Math.abs(matriz[i][j]) < 1e-9) matriz[i][j] = 0;
+  }
+
+  let iter = 0;
+  while (iter < maxIter) {
+    const basics = getBasicCells(matriz);
+    if (basics.length < filas + cols - 1) {
+      // degeneracy: add a very small epsilon to some zero to create basis
+      outer: for (let i = 0; i < filas; i++) {
+        for (let j = 0; j < cols; j++) {
+          if (matriz[i][j] === 0) { matriz[i][j] = 1e-6; break outer; }
+        }
+      }
+    }
+    const { u, v } = computeUV(getBasicCells(matriz));
+    const deltas = reducedCosts(u, v);
+    deltas.sort((a, b) => a.delta - b.delta);
+    if (deltas.length === 0 || deltas[0].delta >= -1e-9) break;
+    const enter = deltas[0];
+    const cycle = findCycle(enter.i, enter.j);
+    if (!cycle) break;
+    adjustCycle(cycle);
+    iter++;
+  }
+
+  return {
+    nombre: 'MODI (opt.)',
+    matriz,
+    costoTotal: calcularCostoTotal(matriz, costos),
+    pasos: [],
+    tiempo: 0
+  };
+}
+
 function calcularCostoTotal(matriz, costos) {
   let total = 0;
   for (let i = 0; i < matriz.length; i++) {
@@ -402,7 +535,12 @@ function resolverProblema() {
 
   if (metodo === 'esquina') resultado = solveNorthwest(costos, oferta, demanda);
   else if (metodo === 'costo') resultado = solveMinimumCost(costos, oferta, demanda);
-  else resultado = solveVogel(costos, oferta, demanda);
+  else if (metodo === 'vogel') resultado = solveVogel(costos, oferta, demanda);
+  else if (metodo === 'modi') {
+    // Build initial feasible solution using Vogel then optimize with MODI
+    const inicial = solveVogel(costos, oferta, demanda);
+    resultado = solveMODI(inicial.matriz, costos, oferta, demanda);
+  } else resultado = solveVogel(costos, oferta, demanda);
 
   resultado.tiempo = Math.round(performance.now() - start);
   mostrarResultado(resultado);
